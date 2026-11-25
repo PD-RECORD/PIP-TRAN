@@ -8,18 +8,12 @@ on:
         required: false
         default: "tw.personal.pipxlate"
   push:
-    paths:
-      - "PiPTranslator/**"
-      - ".github/workflows/pip-translator.yml"
 
 jobs:
   build:
     runs-on: macos-15
     env:
       BUNDLE_ID: ${{ github.event.inputs.bundle_id || 'tw.personal.pipxlate' }}
-    defaults:
-      run:
-        working-directory: PiPTranslator
     steps:
       - uses: actions/checkout@v4
 
@@ -58,10 +52,10 @@ jobs:
       - uses: actions/upload-artifact@v4
         with:
           name: PiPTranslator-ipa
-          path: PiPTranslator/PiPTranslator.ipa
+          path: PiPTranslator.ipa
 
       - uses: actions/upload-artifact@v4
         if: failure()
         with:
           name: build-log
-          path: PiPTranslator/build.log
+          path: build.log
