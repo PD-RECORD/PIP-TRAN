@@ -17,7 +17,8 @@ enum Engine: String, CaseIterable, Identifiable {
     }
 }
 
-let targetLanguage = Locale.Language(languageCode: .chinese, script: .hanTraditional, region: .taiwan)
+/// 預設目標語言；啟動後會改成 iOS 實際支援的繁體中文代碼
+let fallbackTarget = Locale.Language(identifier: "zh-TW")
 
 @MainActor
 final class Translator: ObservableObject {
@@ -34,13 +35,39 @@ final class Translator: ObservableObject {
 
     enum Job {
         case translate([String], Reply)
-        case prepare
     }
 
     private var streams: [String: AsyncStream<Job>.Continuation] = [:]
     private var cache: [String: String] = [:]
     @Published var lastEngineUsed = ""
     @Published var lastError = ""
+    /// iOS 支援的繁體中文（啟動時查詢）
+    @Published var target: Locale.Language?
+    /// 各來源語言的離線包狀態，例如 ["en": "已下載"]
+    @Published var status: [String: String] = [:]
+
+    func resolveTarget() async {
+        let langs = await LanguageAvailability().supportedLanguages
+        let t = langs.first(where: { $0.languageCode == .chinese && $0.script == .hanTraditional })
+            ?? langs.first(where: { $0.languageCode == .chinese && $0.region == .taiwan })
+            ?? fallbackTarget
+        target = t
+        await refreshStatus()
+    }
+
+    func refreshStatus() async {
+        let t = target ?? fallbackTarget
+        let a = LanguageAvailability()
+        for s in ["en", "ja"] {
+            let st = await a.status(from: Locale.Language(identifier: s), to: t)
+            switch st {
+            case .installed: status[s] = "已下載 ✅"
+            case .supported: status[s] = "未下載"
+            case .unsupported: status[s] = "不支援 ❌"
+            @unknown default: status[s] = "未知"
+            }
+        }
+    }
 
     // 由隱藏的 TranslationHost 呼叫
     func makeStream(for source: String) -> AsyncStream<Job> {
@@ -48,10 +75,6 @@ final class Translator: ObservableObject {
         streams[source]?.finish()
         streams[source] = cont
         return stream
-    }
-
-    func prepareLanguages() {
-        for c in streams.values { c.yield(.prepare) }
     }
 
     func translate(_ texts: [String], lang: String, engine: Engine) async -> [String] {
@@ -134,8 +157,6 @@ struct TranslationHost: View {
                 let stream = await translator.makeStream(for: source)
                 for await job in stream {
                     switch job {
-                    case .prepare:
-                        try? await session.prepareTranslation()
                     case .translate(let texts, let reply):
                         do {
                             let reqs = texts.enumerated().map {
@@ -153,10 +174,45 @@ struct TranslationHost: View {
                     }
                 }
             }
-            .onAppear {
-                if config == nil {
-                    config = .init(source: Locale.Language(identifier: source), target: targetLanguage)
-                }
+            .onChange(of: translator.target, initial: true) { _, t in
+                guard let t else { return }
+                config = .init(source: Locale.Language(identifier: source), target: t)
             }
+    }
+}
+
+/// 依序下載語言包（一次只跳一個系統下載視窗）
+struct LanguageDownloader: ViewModifier {
+    @ObservedObject var translator: Translator
+    @Binding var queue: [String]
+    @State private var config: TranslationSession.Configuration?
+    @State private var current = ""
+
+    func body(content: Content) -> some View {
+        content
+            .translationTask(config) { session in
+                var msg = ""
+                do {
+                    try await session.prepareTranslation()
+                } catch {
+                    msg = error.localizedDescription
+                }
+                let m = msg
+                await MainActor.run {
+                    if !m.isEmpty { translator.lastError = "下載\(current)語言包失敗：\(m)" }
+                }
+                await translator.refreshStatus()
+                await MainActor.run { next() }
+            }
+            .onChange(of: queue) { old, new in
+                if old.isEmpty && !new.isEmpty { next() }
+            }
+    }
+
+    @MainActor private func next() {
+        guard !queue.isEmpty else { config = nil; return }
+        let s = queue.removeFirst()
+        current = s == "en" ? "英文" : "日文"
+        config = .init(source: Locale.Language(identifier: s), target: translator.target ?? fallbackTarget)
     }
 }

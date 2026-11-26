@@ -14,6 +14,7 @@ private struct Inner: View {
     @ObservedObject var tr: Translator
     @ObservedObject var pip: PiPManager
     @State private var editingRegion = false
+    @State private var downloadQueue: [String] = []
 
     var body: some View {
         NavigationStack {
@@ -60,7 +61,18 @@ private struct Inner: View {
                     Picker("翻譯引擎", selection: $m.engineRaw) {
                         ForEach(Engine.allCases) { Text($0.title).tag($0.rawValue) }
                     }
-                    Button("下載 Apple 離線語言包（英、日→繁中）") { tr.prepareLanguages() }
+                    Button("下載 Apple 離線語言包（英、日→繁中）") {
+                        tr.lastError = ""
+                        downloadQueue = ["en", "ja"]
+                    }
+                    .disabled(!downloadQueue.isEmpty)
+                    LabeledContent("英文→繁中", value: tr.status["en"] ?? "查詢中…")
+                    LabeledContent("日文→繁中", value: tr.status["ja"] ?? "查詢中…")
+                    if tr.status.values.contains("未下載") {
+                        Text("按了沒反應的話，可到 iPhone「設定 → App → 翻譯 → 已下載的語言」手動下載英文、日文、中文（繁體），再回來按「重新檢查」。")
+                            .font(.caption).foregroundStyle(.secondary)
+                    }
+                    Button("重新檢查語言包狀態") { Task { await tr.refreshStatus() } }
                     VStack(alignment: .leading) {
                         Text("辨識間隔：\(m.config.interval, specifier: "%.1f") 秒")
                         Slider(value: $m.config.interval, in: 0.3...3, step: 0.1, onEditingChanged: { e in if !e { m.configChanged() } })
@@ -89,6 +101,8 @@ private struct Inner: View {
                 }
             }
             .navigationTitle("PiP 翻譯")
+            .modifier(LanguageDownloader(translator: tr, queue: $downloadQueue))
+            .task { await tr.resolveTarget() }
             .background {
                 // 隱藏的 Apple 翻譯 session（英、日各一）
                 TranslationHost(source: "en", translator: tr)
