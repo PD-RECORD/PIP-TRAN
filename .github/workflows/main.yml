@@ -45,6 +45,7 @@ jobs:
         run: |
           APP=build/Build/Products/Release-iphoneos/PiPTranslator.app
           ls "$APP/PlugIns"
+          plutil -p "$APP/PlugIns/BroadcastExtension.appex/Info.plist" | grep -A4 NSExtension
           rm -rf Payload && mkdir Payload
           cp -R "$APP" Payload/
           zip -qry PiPTranslator.ipa Payload
