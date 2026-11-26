@@ -13,6 +13,13 @@ final class PiPManager: NSObject, ObservableObject {
     @Published var isPossible = false
     @Published var isActive = false
 
+    /// 子母畫面按鈕回呼（主執行緒）
+    var onPlay: (() -> Void)?          // 按 ▶
+    var onPause: (() -> Void)?         // 按 ⏸（自動模式）
+    var onSkip: ((Int) -> Void)?       // ⏪ = -1, ⏩ = +1
+    /// 目前顯示「暫停」狀態（▶ 圖示）
+    var showsPaused = true
+
     /// 子母畫面比例（寬:高）
     var renderSize = CGSize(width: 960, height: 400)
 
@@ -29,7 +36,7 @@ final class PiPManager: NSObject, ObservableObject {
         let c = AVPictureInPictureController(contentSource: src)
         c.delegate = self
         c.canStartPictureInPictureAutomaticallyFromInline = true   // 回主畫面時自動進入子母畫面
-        c.requiresLinearPlayback = true
+        c.requiresLinearPlayback = false   // 顯示 ⏪ ⏩ 按鈕，拿來切換範圍
         possibleObs = c.observe(\.isPictureInPicturePossible, options: [.initial, .new]) { [weak self] c, _ in
             DispatchQueue.main.async { self?.isPossible = c.isPictureInPicturePossible }
         }
@@ -40,6 +47,12 @@ final class PiPManager: NSObject, ObservableObject {
             guard let self, let img = self.lastFrame else { return }
             self.enqueue(img)
         }
+    }
+
+    /// 更新 ▶/⏸ 圖示
+    func setPausedIcon(_ paused: Bool) {
+        showsPaused = paused
+        controller?.invalidatePlaybackState()
     }
 
     func toggle() {
@@ -53,6 +66,7 @@ final class PiPManager: NSObject, ObservableObject {
         var fontSize: CGFloat = 34
         var showOriginal = false
         var dark = true
+        var header = ""     // 左上角小字：目前範圍、模式
     }
 
     func show(translated: String, original: String, style: Style) {
@@ -71,6 +85,14 @@ final class PiPManager: NSObject, ObservableObject {
             let fg: UIColor = style.dark ? .white : .black
             let pad: CGFloat = 24
             var box = CGRect(x: pad, y: pad, width: size.width - pad * 2, height: size.height - pad * 2)
+            if !style.header.isEmpty {
+                let attrs: [NSAttributedString.Key: Any] = [
+                    .font: UIFont.systemFont(ofSize: 20, weight: .semibold),
+                    .foregroundColor: UIColor.systemYellow]
+                (style.header as NSString).draw(at: CGPoint(x: pad, y: 10), withAttributes: attrs)
+                box.origin.y += 22
+                box.size.height -= 22
+            }
 
             if style.showOriginal && !original.isEmpty {
                 let oh = box.height * 0.3
@@ -157,14 +179,23 @@ extension PiPManager: AVPictureInPictureControllerDelegate {
 }
 
 extension PiPManager: AVPictureInPictureSampleBufferPlaybackDelegate {
-    func pictureInPictureController(_ c: AVPictureInPictureController, setPlaying playing: Bool) {}
-    func pictureInPictureControllerTimeRangeForPlayback(_ c: AVPictureInPictureController) -> CMTimeRange {
-        CMTimeRange(start: .negativeInfinity, duration: .positiveInfinity)   // 直播模式
+    func pictureInPictureController(_ c: AVPictureInPictureController, setPlaying playing: Bool) {
+        DispatchQueue.main.async {
+            if playing { self.onPlay?() } else { self.onPause?() }
+        }
     }
-    func pictureInPictureControllerIsPlaybackPaused(_ c: AVPictureInPictureController) -> Bool { false }
+    func pictureInPictureControllerTimeRangeForPlayback(_ c: AVPictureInPictureController) -> CMTimeRange {
+        // 有限長度才會出現 ⏪ ⏩ 按鈕
+        CMTimeRange(start: .zero, duration: CMTime(seconds: 86_400, preferredTimescale: 1))
+    }
+    func pictureInPictureControllerIsPlaybackPaused(_ c: AVPictureInPictureController) -> Bool { showsPaused }
     func pictureInPictureController(_ c: AVPictureInPictureController, didTransitionToRenderSize newRenderSize: CMVideoDimensions) {}
     func pictureInPictureController(_ c: AVPictureInPictureController, skipByInterval skipInterval: CMTime,
-                                    completion completionHandler: @escaping () -> Void) { completionHandler() }
+                                    completion completionHandler: @escaping () -> Void) {
+        let dir = CMTimeGetSeconds(skipInterval) >= 0 ? 1 : -1
+        DispatchQueue.main.async { self.onSkip?(dir) }
+        completionHandler()
+    }
 }
 
 /// 把 displayLayer 放進畫面（子母畫面要求圖層必須在視圖階層中）

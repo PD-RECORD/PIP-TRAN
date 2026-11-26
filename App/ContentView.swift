@@ -27,8 +27,20 @@ private struct Inner: View {
                     Button(pip.isActive ? "關閉子母畫面" : "開啟子母畫面") { pip.toggle() }
                         .disabled(!pip.isPossible && !pip.isActive)
                 } header: { Text("子母畫面預覽") } footer: {
-                    Text("開啟後也可直接回主畫面，系統會自動縮成子母畫面。子母畫面請放在翻譯範圍以外，以免把中文也框進去。")
+                    Text("開啟後也可直接回主畫面，系統會自動縮成子母畫面。")
                 }
+
+                Section {
+                    Text("""
+                    1. 下面「螢幕廣播」開始直播
+                    2. 開啟子母畫面，回到任何 App
+                    3. 在子母畫面上點一下叫出按鈕：
+                       ▶ 截取目前畫面並翻譯
+                       ⏪ ⏩ 切換範圍（全螢幕／上半／下半／字幕區／中間／自訂）
+                    """).font(.callout)
+                    Text("也可以用「輕點背面」截取：設定 → 輔助使用 → 觸控 → 輕點背面 → 點兩下 → 選捷徑「截取翻譯」。")
+                        .font(.caption).foregroundStyle(.secondary)
+                } header: { Text("怎麼用（不用回到本 App）") }
 
                 Section("1. 螢幕廣播（擷取畫面）") {
                     HStack {
@@ -43,14 +55,28 @@ private struct Inner: View {
                 }
 
                 Section {
-                    RegionSelector(image: m.snapshot, region: $m.config.region)
+                    Picker("模式", selection: Binding(get: { m.manualMode }, set: { m.setManual($0) })) {
+                        Text("按 ▶ 才截取").tag(true)
+                        Text("自動連續翻譯").tag(false)
+                    }
+                    .pickerStyle(.segmented)
+                    Picker("範圍", selection: Binding(get: { m.presetID }, set: { m.presetID = $0; m.applyPreset(); m.refreshPiP() })) {
+                        ForEach(RegionPreset.all) { Text($0.name).tag($0.id) }
+                    }
+                    Button("現在截取翻譯") { m.captureNow() }
+                        .disabled(!m.broadcasting)
+                } header: { Text("2. 截取方式與範圍") } footer: {
+                    Text("在子母畫面按 ⏪ ⏩ 也能切換範圍。「自動連續」適合看影片字幕。")
+                }
+
+                Section {
+                    RegionSelector(image: m.snapshot, region: $m.customRegion)
                         .frame(maxHeight: 360)
                         .frame(maxWidth: .infinity)
-                        .onChange(of: m.config.region) { _, _ in m.configChanged() }
+                        .onChange(of: m.customRegion) { _, _ in m.customRegionChanged() }
                     Button("全螢幕編輯範圍") { editingRegion = true }
-                    Button("重新取得截圖") { m.requestSnapshot() }
-                } header: { Text("2. 翻譯範圍（拖拉黃色框）") } footer: {
-                    Text("截圖是你「切回本 App 前」最後看到的畫面。要更新就先切到目標 App，再切回來。")
+                } header: { Text("自訂範圍（選用）") } footer: {
+                    Text("截圖是你切回本 App 前最後看到的畫面。拖拉黃色框後，範圍會自動切到「自訂」。")
                 }
 
                 Section("3. 翻譯") {
@@ -110,9 +136,9 @@ private struct Inner: View {
             }
             .fullScreenCover(isPresented: $editingRegion) {
                 NavigationStack {
-                    RegionSelector(image: m.snapshot, region: $m.config.region)
+                    RegionSelector(image: m.snapshot, region: $m.customRegion)
                         .padding()
-                        .onChange(of: m.config.region) { _, _ in m.configChanged() }
+                        .onChange(of: m.customRegion) { _, _ in m.customRegionChanged() }
                         .toolbar { Button("完成") { editingRegion = false } }
                         .navigationTitle("拖拉選擇範圍")
                         .navigationBarTitleDisplayMode(.inline)

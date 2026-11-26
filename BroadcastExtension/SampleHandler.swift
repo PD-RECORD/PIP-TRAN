@@ -21,6 +21,9 @@ class SampleHandler: RPBroadcastSampleHandler {
     /// 最近幾張縮圖（時間, JPEG），用來挑「切回主程式之前」的畫面
     private var snapshots: [(CFTimeInterval, Data)] = []
 
+    /// 最新一張畫面（ReplayKit 畫面不變時不會送新影格，所以要留著給「截取」用）
+    private var latest: (CVPixelBuffer, CGImagePropertyOrientation)?
+
     private var client: LinkConnection?
     private var connected = false
     private var heartbeat: DispatchSourceTimer?
@@ -91,6 +94,8 @@ class SampleHandler: RPBroadcastSampleHandler {
             sendBestSnapshot()
         case "resend":
             lastSentText = ""
+        case "capture":
+            captureNow()
         default: break
         }
     }
@@ -106,30 +111,46 @@ class SampleHandler: RPBroadcastSampleHandler {
         }
     }
 
+    /// 立刻辨識最新一張畫面（不管畫面有沒有變）
+    private func captureNow() {
+        lock.lock()
+        guard let l = latest, !busy else { lock.unlock(); return }
+        let pb = l.0, o = l.1
+        busy = true
+        let cfg = config
+        lock.unlock()
+        work.async { [weak self] in
+            guard let self else { return }
+            self.lastSentText = ""   // 強制回傳，讓使用者看到有反應
+            autoreleasepool { self.recognize(pb, o, cfg) }
+            self.lock.lock(); self.busy = false; self.lock.unlock()
+        }
+    }
+
     // MARK: - Frames
 
     override func processSampleBuffer(_ sampleBuffer: CMSampleBuffer, with sampleBufferType: RPSampleBufferType) {
         guard sampleBufferType == .video else { return }
         let now = CACurrentMediaTime()
 
+        var orientation = CGImagePropertyOrientation.up
+        if let n = CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString, attachmentModeOut: nil) as? NSNumber,
+           let o = CGImagePropertyOrientation(rawValue: n.uint32Value) {
+            orientation = o
+        }
+        guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else { return }
+
         lock.lock()
+        latest = (pb, orientation)
         let cfg = config
-        let needOCR = !cfg.appForeground && now - lastOCR >= max(cfg.interval, 0.3)
+        let needOCR = !cfg.appForeground && !cfg.manual && !cfg.paused
+            && now - lastOCR >= max(cfg.interval, 0.3)
         let needSnap = !cfg.appForeground && now - lastSnap >= 1.0
         if busy || (!needOCR && !needSnap) { lock.unlock(); return }
         busy = true
         if needOCR { lastOCR = now }
         if needSnap { lastSnap = now }
         lock.unlock()
-
-        guard let pb = CMSampleBufferGetImageBuffer(sampleBuffer) else {
-            lock.lock(); busy = false; lock.unlock(); return
-        }
-        var orientation = CGImagePropertyOrientation.up
-        if let n = CMGetAttachment(sampleBuffer, key: RPVideoSampleOrientationKey as CFString, attachmentModeOut: nil) as? NSNumber,
-           let o = CGImagePropertyOrientation(rawValue: n.uint32Value) {
-            orientation = o
-        }
 
         work.async { [weak self] in
             guard let self else { return }

@@ -16,6 +16,7 @@ struct NormRect: Codable, Equatable {
     var h: Double
 
     static let `default` = NormRect(x: 0.05, y: 0.35, w: 0.9, h: 0.3)
+    static let full = NormRect(x: 0, y: 0, w: 1, h: 1)
 
     var clamped: NormRect {
         var r = self
@@ -32,10 +33,12 @@ struct ExtConfig: Codable, Equatable {
     var interval: Double = 0.8        // OCR 最短間隔（秒）
     var langHint: String = "auto"     // auto / en / ja
     var appForeground: Bool = true    // 主程式在前景時暫停 OCR
+    var manual: Bool = true           // true：只在按 ▶ / 捷徑時截取；false：持續自動翻譯
+    var paused: Bool = false          // 自動模式下暫停
 }
 
 struct LinkMessage: Codable {
-    var type: String                  // hello / heartbeat / ocr / snapshot / config / requestSnapshot
+    var type: String                  // hello / heartbeat / ocr / snapshot / config / requestSnapshot / capture
     var paragraphs: [String]? = nil
     var lang: String? = nil
     var image: Data? = nil            // JPEG（JSON 內會自動 base64）
