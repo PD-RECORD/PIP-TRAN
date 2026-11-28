@@ -38,8 +38,6 @@ private struct Inner: View {
                        ▶ 截取目前畫面並翻譯
                        ⏪ ⏩ 切換範圍（全螢幕／上半／下半／字幕區／中間／自訂）
                     """).font(.callout)
-                    Text("也可以用「輕點背面」截取：設定 → 輔助使用 → 觸控 → 輕點背面 → 點兩下 → 選捷徑「截取翻譯」。")
-                        .font(.caption).foregroundStyle(.secondary)
                 } header: { Text("怎麼用（不用回到本 App）") }
 
                 Section("1. 螢幕廣播（擷取畫面）") {
